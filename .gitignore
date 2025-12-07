@@ -1,0 +1,8 @@
+# 編譯產物
+game
+game.exe
+*.o
+*.obj
+
+# 遊戲記錄
+game_log.txt
