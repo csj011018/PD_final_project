@@ -23,32 +23,35 @@ constexpr float HUMAN_Y      = 520.f;
 constexpr float SIDE_MARGIN  = 40.f;
 
 // ======================
-// Game state
+// Game state container
 // ======================
 
 struct GuiGameState {
-    Deck deck;
+    Deck  deck;
     Player human;
-    Enemy ai1;
-    Enemy ai2;
-    std::vector<CardCharacter*> players;
+    Enemy  ai1;
+    Enemy  ai2;
+
+    std::vector<CardCharacter*> players;   // [0] human, [1] ai1, [2] ai2
 
     std::vector<Card> bottomCards;
 
     int landlordIndex        = 0;
     int currentPlayerIndex   = 0;
 
-    Move lastMove;                  // last non-cleared table move（邏輯用，不再畫出）
+    Move lastMove;                  // last non-cleared move (for rules)
     int  lastMovePlayerIndex = -1;
     int  passCountInRound    = 0;
 
-    // 每個玩家最後一次行動（包括 Pass）
-    Move lastAction[3];
+    Move lastAction[3];             // last action (including Pass) per player
 
     bool gameOver       = false;
     int  winnerIndex    = -1;
 
     bool landlordChosen = false;
+
+    int  initialHandSize[3] = {17, 17, 17}; // reset after landlord chosen
+    std::string playerNames[3] = {"You", "AI_1", "AI_2"};
 
     GuiGameState()
         : human("You"), ai1("AI_1"), ai2("AI_2")
@@ -56,11 +59,17 @@ struct GuiGameState {
         players.push_back(&human);
         players.push_back(&ai1);
         players.push_back(&ai2);
+
         for (int i = 0; i < 3; ++i) {
             lastAction[i] = Move();
         }
     }
 };
+
+std::string getPlayerName(const GuiGameState& g, int idx) {
+    if (idx < 0 || idx > 2) return "Unknown";
+    return g.playerNames[idx];
+}
 
 int nextIndex(int idx) { return (idx + 1) % 3; }
 
@@ -104,14 +113,14 @@ void initGuiGame(GuiGameState& g) {
     g.deck.init();
     g.deck.shuffle();
 
-    // 17 cards each
+    // 發 17 張牌給每個玩家
     for (int i = 0; i < 17; ++i) {
         for (int p = 0; p < 3; ++p) {
             g.players[p]->addCard(g.deck.draw());
         }
     }
 
-    // 3 bottom cards
+    // 3 張底牌
     g.bottomCards.clear();
     while (g.deck.size() > 0) {
         g.bottomCards.push_back(g.deck.draw());
@@ -121,7 +130,7 @@ void initGuiGame(GuiGameState& g) {
         p->sortHand();
     }
 
-    g.landlordIndex        = 0;   // will be decided later
+    g.landlordIndex        = 0;
     g.currentPlayerIndex   = 0;
     g.lastMove             = Move();
     g.lastMovePlayerIndex  = -1;
@@ -131,35 +140,38 @@ void initGuiGame(GuiGameState& g) {
     g.landlordChosen       = false;
 
     for (int i = 0; i < 3; ++i) {
-        g.lastAction[i] = Move();
+        g.lastAction[i]      = Move();
+        g.initialHandSize[i] = 17;
     }
 }
 
-// used when pressing R on game over
+// 正確的重新開始：重設整個 struct，然後重新綁定 players 指標，再重新發牌
 void resetFullGame(GuiGameState& g) {
-    g.deck = Deck();
-    g.bottomCards.clear();
+    g = GuiGameState();          // 重新建構裡面的 deck/human/ai1/ai2/flags
 
-    g.human = Player("You");
-    g.ai1   = Enemy("AI_1");
-    g.ai2   = Enemy("AI_2");
-
+    // assignment 之後 players 會指向暫時物件，要重新指到 g 自己的成員
     g.players.clear();
     g.players.push_back(&g.human);
     g.players.push_back(&g.ai1);
     g.players.push_back(&g.ai2);
 
+    // 再重新發牌 & 初始化狀態
     initGuiGame(g);
 }
 
+// ======================
+// 出牌 / 回合更新
+// ======================
+
 void applyMove(GuiGameState& g, int playerIdx, const Move& mv) {
-    // 記錄每個玩家最後一次行動（給畫面用）
+    // 記錄該玩家最後一次動作（給 UI 顯示用）
     g.lastAction[playerIdx] = mv;
 
     if (mv.isPass()) {
         if (g.lastMove.type != HandType::Pass) {
             g.passCountInRound++;
             if (g.passCountInRound >= 2) {
+                // 兩人連續 Pass，清桌
                 g.lastMove            = Move();
                 g.lastMovePlayerIndex = -1;
                 g.passCountInRound    = 0;
@@ -203,7 +215,7 @@ void drawCard(sf::RenderWindow& window, sf::Font& font,
         window.draw(idxText);
     }
 
-    std::string label = card.toString();
+    std::string label = card.toString();  // ex: "S3", "HA", "RJ"
     sf::Text cardText(font, label, 20);
     cardText.setFillColor(sf::Color::Black);
 
@@ -246,7 +258,7 @@ void drawAIPanels(sf::RenderWindow& window,
         t.setFillColor(sf::Color::White);
         t.setPosition({50.f, static_cast<float>(i == 1 ? 40 : 70)});
 
-        std::string s = g.players[i]->getNameRef() +
+        std::string s = getPlayerName(g, i) +
                         "   Cards: " +
                         std::to_string(g.players[i]->handSize());
         if (i == g.landlordIndex) {
@@ -257,7 +269,7 @@ void drawAIPanels(sf::RenderWindow& window,
     }
 }
 
-// 顯示三人的「最近一手」：左 AI1、中玩家、右 AI2
+// show last action of each player: left AI1, center human, right AI2
 void drawActions(sf::RenderWindow& window,
                  const GuiGameState& g,
                  sf::Font& font)
@@ -272,7 +284,7 @@ void drawActions(sf::RenderWindow& window,
     auto drawSide = [&](int idx, float labelX, bool leftSide) {
         const Move& mv = g.lastAction[idx];
 
-        std::string header = g.players[idx]->getNameRef() + ": ";
+        std::string header = getPlayerName(g, idx) + ": ";
         sf::Text h(font, "", 16);
 
         if (mv.type == HandType::Pass) {
@@ -305,13 +317,14 @@ void drawActions(sf::RenderWindow& window,
         }
     };
 
-    // 左右 AI
+    // left AI
     drawSide(1, leftXLabel,  true);
+    // right AI
     drawSide(2, rightXLabel, false);
 
-    // 中間玩家
+    // center human
     const Move& mv = g.lastAction[0];
-    std::string header = g.players[0]->getNameRef() + ": ";
+    std::string header = getPlayerName(g, 0) + ": ";
     sf::Text h(font, "", 16);
 
     if (mv.type == HandType::Pass) {
@@ -349,20 +362,20 @@ void drawHUD(sf::RenderWindow& window,
              sf::Font& font,
              const std::string& err)
 {
-    // Turn 上移
+    // Turn (moved up)
     sf::Text info(font, "", 18);
     info.setFillColor(sf::Color::Yellow);
     info.setPosition({50.f, 110.f});
 
     if (!g.gameOver) {
-        info.setString("Turn: " + g.players[g.currentPlayerIndex]->getNameRef());
+        info.setString("Turn: " + getPlayerName(g, g.currentPlayerIndex));
     } else {
         info.setString("Game over! Winner: " +
-                       g.players[g.winnerIndex]->getNameRef());
+                       getPlayerName(g, g.winnerIndex));
     }
     window.draw(info);
 
-    // Controls 上移
+    // Controls
     sf::Text help(font,
                   "Controls: click to select, Enter=Play, P=Pass, C=Clear",
                   16);
@@ -422,8 +435,7 @@ void drawEndScreen(sf::RenderWindow& window,
     title.setPosition({tx, 150.f});
     window.draw(title);
 
-    std::string winner = "Winner: " +
-        g.players[g.winnerIndex]->getNameRef();
+    std::string winner = "Winner: " + getPlayerName(g, g.winnerIndex);
     sf::Text wtext(font, winner, 28);
     wtext.setFillColor(sf::Color::White);
     auto wb = wtext.getLocalBounds();
@@ -453,6 +465,12 @@ void drawEndScreen(sf::RenderWindow& window,
 // ======================
 // Start / Rules screens
 // ======================
+
+enum class Scene {
+    Start,
+    Rules,
+    Game
+};
 
 void drawStartScreen(sf::RenderWindow& window, sf::Font& font)
 {
@@ -490,7 +508,7 @@ void drawRulesScreen(sf::RenderWindow& window, sf::Font& font)
     window.draw(title);
 
     std::string rules =
-        "1. Three players, one landlord, two farmers.\n"
+        "1. Three players: one landlord, two farmers.\n"
         "2. Each player has 17 cards, plus 3 bottom cards for the landlord.\n"
         "3. Supported patterns:\n"
         "   - Single, Pair\n"
@@ -514,16 +532,6 @@ void drawRulesScreen(sf::RenderWindow& window, sf::Font& font)
     body.setPosition({80.f, 140.f});
     window.draw(body);
 }
-
-// ======================
-// Scene enum
-// ======================
-
-enum class Scene {
-    Start,
-    Rules,
-    Game
-};
 
 // ======================
 // main
@@ -550,7 +558,6 @@ int main() {
     sf::Clock clock;
     bool waitingForAI = false;
     float aiTriggerTime = 0.f;
-    const float AI_DELAY = 0.8f;
 
     Scene scene = Scene::Start;
 
@@ -592,7 +599,7 @@ int main() {
                 continue;
             }
 
-            // Game over: 只能 R / Q
+            // Game over: only R / Q
             if (game.gameOver) {
                 if (auto* k = e.getIf<sf::Event::KeyPressed>()) {
                     if (k->code == sf::Keyboard::Key::R) {
@@ -609,10 +616,11 @@ int main() {
                 continue;
             }
 
-            // 地主選擇階段
+            // Landlord selection phase
             if (!game.landlordChosen) {
                 if (auto* k = e.getIf<sf::Event::KeyPressed>()) {
                     if (k->code == sf::Keyboard::Key::Y) {
+                        // human is landlord
                         game.landlordIndex = 0;
                         for (const auto& c : game.bottomCards) {
                             game.human.addCard(c);
@@ -622,7 +630,13 @@ int main() {
                         game.currentPlayerIndex = game.landlordIndex;
                         game.landlordChosen = true;
                         errorMsg.clear();
+
+                        // record initial hand size
+                        for (int i = 0; i < 3; ++i) {
+                            game.initialHandSize[i] = game.players[i]->handSize();
+                        }
                     } else if (k->code == sf::Keyboard::Key::N) {
+                        // random AI landlord
                         std::random_device rd;
                         std::mt19937 gen(rd());
                         std::uniform_int_distribution<int> dist(1, 2);
@@ -630,19 +644,24 @@ int main() {
 
                         game.landlordIndex = aiLandlord;
                         for (const auto& c : game.bottomCards) {
-                            dynamic_cast<Enemy*>(game.players[aiLandlord])->addCard(c);
+                            game.players[aiLandlord]->addCard(c);
                         }
                         game.players[aiLandlord]->sortHand();
                         game.currentPlayerIndex = game.landlordIndex;
                         game.landlordChosen = true;
                         waitingForAI = false;
                         errorMsg.clear();
+
+                        // record initial hand size
+                        for (int i = 0; i < 3; ++i) {
+                            game.initialHandSize[i] = game.players[i]->handSize();
+                        }
                     }
                 }
                 continue;
             }
 
-            // 正常遊戲階段：只有玩家回合才吃輸入
+            // Normal game: only human turn listens to controls
             if (!game.gameOver && game.currentPlayerIndex == 0) {
                 if (auto* m = e.getIf<sf::Event::MouseButtonPressed>()) {
                     if (m->button == sf::Mouse::Button::Left) {
@@ -723,10 +742,31 @@ int main() {
             float now = clock.getElapsedTime().asSeconds();
             if (!waitingForAI) {
                 waitingForAI = true;
-                aiTriggerTime = now + AI_DELAY;
+                aiTriggerTime = now + 0.8f;
             } else if (now >= aiTriggerTime) {
                 Enemy* e = dynamic_cast<Enemy*>(game.players[game.currentPlayerIndex]);
                 if (e) {
+                    // compute probability of using bomb/rocket
+                    double prob = 1.0;
+
+                    if (game.lastMove.type != HandType::Pass &&
+                        game.lastMove.type != HandType::Bomb &&
+                        game.lastMove.type != HandType::Rocket &&
+                        game.lastMovePlayerIndex >= 0)
+                    {
+                        int oppIdx  = game.lastMovePlayerIndex;
+                        int current = game.players[oppIdx]->handSize();
+                        int start   = game.initialHandSize[oppIdx];
+                        if (start > 0) {
+                            prob = 1.0 - static_cast<double>(current) /
+                                          static_cast<double>(start);
+                            if (prob < 0.0) prob = 0.0;
+                            if (prob > 1.0) prob = 1.0;
+                        }
+                    }
+
+                    e->setBombDecisionProb(prob);
+
                     Move mv = e->playTurn(game.lastMove);
                     applyMove(game, game.currentPlayerIndex, mv);
                 }
@@ -741,7 +781,7 @@ int main() {
             drawStartScreen(window, font);
         } else if (scene == Scene::Rules) {
             drawRulesScreen(window, font);
-        } else { // Game
+        } else { // Scene::Game
             if (!game.gameOver) {
                 drawHumanHand(window, game, selected, font);
                 drawAIPanels(window, game, font);
