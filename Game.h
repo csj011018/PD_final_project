@@ -9,13 +9,7 @@
 class Game {
 private:
     Deck deck;
-
-    Player player;
-    std::vector<Enemy> enemies;
-    std::vector<Item> items;
-
-    std::vector<CardCharacter*> playersAll;
-
+    std::vector<CardCharacter*> players;
     std::ofstream logFile;
 
     int landlordIndex;
@@ -25,17 +19,19 @@ private:
     int lastMovePlayerIndex;
     int passCountInRound;
 
-    void logMove(const CardCharacter& ch, const Move& move);
-    void logWinner(const CardCharacter& ch);
-    int decideLandlord();
-    int nextPlayerIndex(int idx) const;
-
 public:
     Game();
     ~Game();
 
     void initGame();
     void play();
+
+private:
+    void logMove(const CardCharacter& player, const Move& move);
+    void logWinner(const CardCharacter& player);
+
+    int decideLandlord();
+    int nextPlayerIndex(int idx) const;
 };
 
 #endif // GAME_H

@@ -1,18 +1,21 @@
 #include "Card.h"
 #include <algorithm>
+#include <ostream>
+#include <string>
+#include <vector>
 
 using namespace std;
 
 // ======================
-// Suit / Card 實作
+// Suit / Card
 // ======================
 
 string suitToString(Suit s) {
     switch (s) {
-    case Suit::Spade:   return "♠";
-    case Suit::Heart:   return "♥";
-    case Suit::Club:    return "♣";
-    case Suit::Diamond: return "♦";
+    case Suit::Spade:   return "S";      // Spade
+    case Suit::Heart:   return "H";      // Heart
+    case Suit::Club:    return "C";      // Club
+    case Suit::Diamond: return "D";      // Diamond
     case Suit::Joker:   return "Joker";
     default:            return "?";
     }
@@ -22,12 +25,14 @@ Card::Card(Suit s, int r)
     : suit(s), rank(r) {}
 
 string Card::toString() const {
+    // Jokers
     if (suit == Suit::Joker) {
-        if (rank == 16) return "Joker(小)";
-        if (rank == 17) return "Joker(大)";
+        if (rank == 16) return "Joker(S)"; // small joker
+        if (rank == 17) return "Joker(B)"; // big joker
         return "Joker(?)";
     }
 
+    // Normal ranks
     string rankStr;
     if (rank >= 3 && rank <= 10) {
         rankStr = to_string(rank);
@@ -45,6 +50,7 @@ string Card::toString() const {
         rankStr = "?";
     }
 
+    // Example: "S3", "HK", "D10", "C2"
     return suitToString(suit) + rankStr;
 }
 
@@ -58,20 +64,20 @@ ostream& operator<<(ostream& os, const Card& c) {
 }
 
 // ======================
-// HandType / Move 實作
+// HandType / Move
 // ======================
 
 string handTypeToString(HandType t) {
     switch (t) {
     case HandType::Pass:      return "Pass";
-    case HandType::Single:    return "單張";
-    case HandType::Pair:      return "對子";
-    case HandType::Straight:  return "順子";
-    case HandType::FullHouse: return "葫蘆";
-    case HandType::Bomb:      return "炸彈";
-    case HandType::Rocket:    return "火箭";
+    case HandType::Single:    return "Single";
+    case HandType::Pair:      return "Pair";
+    case HandType::Straight:  return "Straight";
+    case HandType::FullHouse: return "Full House";
+    case HandType::Bomb:      return "Bomb";
+    case HandType::Rocket:    return "Rocket";
     case HandType::Invalid:
-    default:                  return "非法牌型";
+    default:                  return "Invalid";
     }
 }
 
@@ -80,14 +86,13 @@ bool isStraight(vector<Card> cards) {
         return a.rank < b.rank;
     });
 
-    // 不含 2 與 Joker
+    // Disallow 2 and Jokers in a straight
     for (const auto& c : cards) {
         if (c.rank < 3 || c.rank > 14) {
             return false;
         }
     }
 
-    // 連號檢查
     for (size_t i = 0; i + 1 < cards.size(); ++i) {
         if (cards[i + 1].rank != cards[i].rank + 1) {
             return false;
@@ -108,12 +113,12 @@ pair<HandType, int> analyzeHand(const vector<Card>& cards) {
 
     size_t n = v.size();
 
-    // 單張
+    // Single
     if (n == 1) {
         return { HandType::Single, v[0].rank };
     }
 
-    // 兩張：可能是火箭或對子
+    // Two cards: pair or rocket
     if (n == 2) {
         if (v[0].suit == Suit::Joker && v[1].suit == Suit::Joker) {
             return { HandType::Rocket, 100 };
@@ -124,7 +129,7 @@ pair<HandType, int> analyzeHand(const vector<Card>& cards) {
         return { HandType::Invalid, -1 };
     }
 
-    // 四張：炸彈
+    // Four cards: bomb
     if (n == 4) {
         bool allSame = (v[0].rank == v[1].rank &&
                         v[1].rank == v[2].rank &&
@@ -135,11 +140,12 @@ pair<HandType, int> analyzeHand(const vector<Card>& cards) {
         return { HandType::Invalid, -1 };
     }
 
-    // 五張：順子或葫蘆
+    // Five cards: straight or full house
     if (n == 5) {
         if (isStraight(v)) {
             return { HandType::Straight, v.back().rank };
         }
+
         bool case1 = (v[0].rank == v[1].rank &&
                       v[1].rank == v[2].rank &&
                       v[3].rank == v[4].rank &&
@@ -173,7 +179,7 @@ bool Move::isPass() const {
 }
 
 // ======================
-// 出牌比較 canBeat
+// canBeat
 // ======================
 
 bool canBeat(const Move& prev, const Move& now) {

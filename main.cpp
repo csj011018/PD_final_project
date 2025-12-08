@@ -10,7 +10,7 @@ int main() {
         game.initGame();
         game.play();
     } catch (const std::exception& e) {
-        std::cerr << "程式發生例外：" << e.what() << std::endl;
+        std::cerr << "Exception: " << e.what() << "\n";
     }
 
     return 0;

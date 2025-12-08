@@ -1,45 +1,21 @@
 #include "Character.h"
+
 #include <iostream>
 #include <algorithm>
-#include <map>
+#include <stdexcept>
 #include <limits>
+#include <map>
 #include <sstream>
-#include <cctype>
+#include <random>
 
 using namespace std;
 
-// ================= Character / Item =================
+// =====================
+// CardCharacter
+// =====================
 
-Character::Character(const std::string& n, int hp)
-    : name(n), health(hp) {}
-
-Character::~Character() = default;
-
-std::string Character::getName() const {
-    return name;
-}
-
-int Character::getHealth() const {
-    return health;
-}
-
-Item::Item(const std::string& n)
+CardCharacter::CardCharacter(const std::string& n)
     : name(n) {}
-
-std::string Item::getName() const {
-    return name;
-}
-
-// ================= CardCharacter =================
-
-CardCharacter::CardCharacter(const std::string& n, int hp)
-    : Character(n, hp) {}
-
-CardCharacter::~CardCharacter() = default;
-
-const std::string& CardCharacter::getNameRef() const {
-    return name;
-}
 
 void CardCharacter::addCard(const Card& c) {
     hand.push_back(c);
@@ -50,184 +26,184 @@ void CardCharacter::sortHand() {
 }
 
 void CardCharacter::printHand() const {
-    cout << "玩家 [" << name << "] 的手牌：" << endl;
+    cout << "Player [" << name << "] hand:\n";
     for (size_t i = 0; i < hand.size(); ++i) {
         cout << "(" << i << ") " << hand[i] << "  ";
     }
-    cout << endl;
+    cout << "\n";
 }
 
-size_t CardCharacter::handSize() const {
-    return hand.size();
-}
-
-bool CardCharacter::isHandEmpty() const {
-    return hand.empty();
-}
-
-const Card& CardCharacter::getCard(size_t index) const {
+const Card& CardCharacter::getCard(std::size_t index) const {
     if (index >= hand.size()) {
-        throw out_of_range("Card index out of range.");
+        throw std::out_of_range("Card index out of range");
     }
     return hand[index];
 }
 
-vector<Card> CardCharacter::playCardsByIndices(const vector<int>& indices) {
+std::vector<Card> CardCharacter::playCardsByIndices(const std::vector<int>& indices) {
     if (indices.empty()) return {};
 
-    vector<int> idx = indices;
-    sort(idx.begin(), idx.end());
-    vector<Card> chosen;
+    std::vector<int> idx = indices;
+    std::sort(idx.begin(), idx.end());
+
+    std::vector<Card> chosen;
     chosen.reserve(idx.size());
     for (int i : idx) {
-        if (i < 0 || static_cast<size_t>(i) >= hand.size()) {
-            throw out_of_range("Card index out of range in playCardsByIndices.");
+        if (i < 0 || static_cast<std::size_t>(i) >= hand.size()) {
+            throw std::out_of_range("Card index out of range in playCardsByIndices");
         }
-        chosen.push_back(hand[static_cast<size_t>(i)]);
+        chosen.push_back(hand[static_cast<std::size_t>(i)]);
     }
+
     for (int i = static_cast<int>(idx.size()) - 1; i >= 0; --i) {
         hand.erase(hand.begin() + idx[i]);
     }
+
     return chosen;
 }
 
-const vector<Card>& CardCharacter::getHand() const {
-    return hand;
+// =====================
+// Player (human)
+// =====================
+
+static bool validateIndices(const CardCharacter& player,
+                            const std::vector<int>& indices,
+                            std::string& message)
+{
+    if (indices.empty()) {
+        message = "No cards selected.";
+        return false;
+    }
+
+    std::size_t nHand = player.handSize();
+
+    for (std::size_t i = 0; i < indices.size(); ++i) {
+        int idx = indices[i];
+        if (idx < 0 || static_cast<std::size_t>(idx) >= nHand) {
+            message = "Index " + std::to_string(idx) + " is out of range.";
+            return false;
+        }
+        for (std::size_t j = i + 1; j < indices.size(); ++j) {
+            if (indices[j] == indices[i]) {
+                message = "Duplicate indices are not allowed.";
+                return false;
+            }
+        }
+    }
+    return true;
 }
 
-// ================= Player =================
+Move Player::playTurnWithIndices(const Move& lastMove,
+                                 const std::vector<int>& indices,
+                                 bool& ok,
+                                 std::string& message)
+{
+    ok = false;
+    message.clear();
 
-Player::Player(const std::string& n)
-    : CardCharacter(n, 100) {}
+    if (indices.empty()) {
+        // treat as Pass
+        ok = true;
+        return Move();
+    }
 
-void Player::attack(Character& target) {
-    cout << "玩家 [" << name << "] 對 [" << target.getName()
-         << "] 發動攻擊（在本遊戲中代表出牌行為）。\n";
+    if (!validateIndices(*this, indices, message)) {
+        return Move();
+    }
+
+    std::vector<Card> selected;
+    selected.reserve(indices.size());
+    for (int idx : indices) {
+        selected.push_back(getCard(static_cast<std::size_t>(idx)));
+    }
+
+    auto info = analyzeHand(selected);
+    HandType t = info.first;
+    int mainRank = info.second;
+
+    if (t == HandType::Invalid) {
+        message = "This set of cards is not a valid hand type.";
+        return Move();
+    }
+
+    Move candidate(t, selected, mainRank);
+
+    if (!canBeat(lastMove, candidate)) {
+        message = "This move cannot beat the previous move.";
+        return Move();
+    }
+
+    std::vector<Card> played = playCardsByIndices(indices);
+    (void)played; // not needed further here
+
+    ok = true;
+    return Move(t, selected, mainRank);
 }
 
 Move Player::playTurn(const Move& lastMove) {
+    cout << "\n=== Your turn ===\n";
+    printHand();
+
+    cout << "Current table:\n";
+    if (lastMove.type == HandType::Pass) {
+        cout << "No cards on table. You may play any valid hand.\n";
+    } else {
+        cout << "Previous hand: [" << handTypeToString(lastMove.type) << "] ";
+        for (const auto& c : lastMove.cards) {
+            cout << c << "  ";
+        }
+        cout << "\n";
+    }
+
+    cout << "\nHow to play:\n";
+    cout << " - Enter card indices separated by spaces, then press Enter.\n";
+    cout << " - Example: 0 1 2\n";
+    cout << " - Enter an empty line to Pass.\n\n";
+
     while (true) {
-        cout << "\n=== 輪到你出牌 ===\n";
-        printHand();
-
-        cout << "【目前桌面狀態】\n";
-        if (lastMove.type == HandType::Pass) {
-            cout << "桌面目前沒有牌，你可以出任何合法牌型。\n";
-        } else {
-            cout << "上一手牌型：" << handTypeToString(lastMove.type) << "，牌：";
-            for (const auto& c : lastMove.cards) {
-                cout << c << "  ";
-            }
-            cout << "\n";
+        cout << "Input indices (or empty line to Pass): ";
+        std::string line;
+        std::getline(std::cin, line);
+        if (!std::cin) {
+            std::cin.clear();
         }
 
-        cout << "請輸入要出的牌索引（用空白分隔，直接按 Enter = Pass）：\n";
-
-        if (cin.peek() == '\n') {
-            cin.get();
-        }
-
-        string line;
-        if (!getline(cin, line)) {
-            cout << "讀取輸入失敗，請重新出牌。\n";
-            cin.clear();
-            continue;
-        }
-
-        bool allSpace = true;
-        for (char ch : line) {
-            if (!isspace(static_cast<unsigned char>(ch))) {
-                allSpace = false;
-                break;
-            }
-        }
-
-        if (allSpace) {
-            cout << "你選擇 Pass。\n";
+        if (line.empty()) {
+            cout << "You choose to Pass.\n";
             return Move();
         }
 
-        istringstream iss(line);
-        vector<int> idxList;
-        int idx;
-        while (iss >> idx) {
-            idxList.push_back(idx);
+        std::vector<int> indices;
+        {
+            std::istringstream iss(line);
+            int x;
+            while (iss >> x) {
+                indices.push_back(x);
+            }
         }
 
-        if (idxList.empty()) {
-            cout << "沒有讀到任何有效索引，請重新輸入。\n";
+        bool ok = false;
+        std::string msg;
+        Move mv = playTurnWithIndices(lastMove, indices, ok, msg);
+        if (!ok) {
+            cout << "Invalid move: " << msg << "\nPlease try again.\n";
             continue;
         }
 
-        size_t n = idxList.size();
-
-        for (size_t i = 0; i < n; ++i) {
-            int idx2 = idxList[i];
-            if (idx2 < 0 || static_cast<size_t>(idx2) >= handSize()) {
-                cout << "索引 " << idx2 << " 超出範圍，請重新出牌。\n";
-                goto CONTINUE_INPUT;
-            }
-            for (size_t j = i + 1; j < n; ++j) {
-                if (idxList[j] == idxList[i]) {
-                    cout << "索引 " << idx2 << " 重複輸入，請重新出牌。\n";
-                    goto CONTINUE_INPUT;
-                }
-            }
-        }
-
-        {
-            vector<Card> selected;
-            selected.reserve(n);
-            for (int id : idxList) {
-                selected.push_back(getCard(static_cast<size_t>(id)));
-            }
-
-            auto info = analyzeHand(selected);
-            HandType t = info.first;
-            int mainRank = info.second;
-
-            if (t == HandType::Invalid) {
-                cout << "這組牌不是合法牌型（單張 / 對子 / 5 張順子 / 葫蘆 / 炸彈 / 火箭），請重新出牌。\n";
-                goto CONTINUE_INPUT;
-            }
-
-            Move candidate(t, selected, mainRank);
-
-            if (!canBeat(lastMove, candidate)) {
-                cout << "這組牌無法壓過上一手牌，請重新選擇。\n";
-                goto CONTINUE_INPUT;
-            }
-
-            vector<Card> played = playCardsByIndices(idxList);
-            cout << "你出牌：[" << handTypeToString(t) << "] ";
-            for (const auto& c : played) {
-                cout << c << "  ";
-            }
-            cout << "\n";
-
-            return Move(t, played, mainRank);
-        }
-
-    CONTINUE_INPUT:
-        continue;
+        cout << "You play: [" << handTypeToString(mv.type) << "] ";
+        for (const auto& c : mv.cards) cout << c << "  ";
+        cout << "\n";
+        return mv;
     }
 }
 
-// ================= Enemy（AI） =================
+// ======================
+// Enemy (AI) smarter play
+// ======================
 
-Enemy::Enemy(const std::string& n)
-    : CardCharacter(n, 100) {}
-
-void Enemy::attack(Character& target) {
-    cout << "敵人 [" << name << "] 對 [" << target.getName()
-         << "] 發動攻擊（在本遊戲中代表 AI 出牌）。\n";
-}
-
-// ---- 以下都是 AI 用的小工具 ----
-
-bool Enemy::findSingleGreater(int targetRank, vector<int>& outIdx) {
-    const auto& h = getHand();
-    for (size_t i = 0; i < h.size(); ++i) {
+bool Enemy::findSingleGreater(int targetRank, std::vector<int>& outIdx) const {
+    const auto& h = hand;
+    for (std::size_t i = 0; i < h.size(); ++i) {
         if (h[i].rank > targetRank) {
             outIdx = { static_cast<int>(i) };
             return true;
@@ -236,13 +212,13 @@ bool Enemy::findSingleGreater(int targetRank, vector<int>& outIdx) {
     return false;
 }
 
-bool Enemy::findPairGreater(int targetRank, vector<int>& outIdx) {
-    const auto& h = getHand();
-    size_t n = h.size();
-    size_t i = 0;
+bool Enemy::findPairGreater(int targetRank, std::vector<int>& outIdx) const {
+    const auto& h = hand;
+    std::size_t n = h.size();
+    std::size_t i = 0;
     while (i + 1 < n) {
         int r = h[i].rank;
-        size_t j = i + 1;
+        std::size_t j = i + 1;
         while (j < n && h[j].rank == r) {
             ++j;
         }
@@ -256,13 +232,13 @@ bool Enemy::findPairGreater(int targetRank, vector<int>& outIdx) {
     return false;
 }
 
-bool Enemy::findBomb(int targetRank, bool mustGreater, vector<int>& outIdx, int& bombRank) {
-    const auto& h = getHand();
-    size_t n = h.size();
-    size_t i = 0;
+bool Enemy::findBomb(int targetRank, bool mustGreater, std::vector<int>& outIdx) const {
+    const auto& h = hand;
+    std::size_t n = h.size();
+    std::size_t i = 0;
     while (i + 3 < n) {
         int r = h[i].rank;
-        size_t j = i + 1;
+        std::size_t j = i + 1;
         while (j < n && h[j].rank == r) {
             ++j;
         }
@@ -275,7 +251,6 @@ bool Enemy::findBomb(int targetRank, bool mustGreater, vector<int>& outIdx, int&
                     static_cast<int>(i + 2),
                     static_cast<int>(i + 3)
                 };
-                bombRank = r;
                 return true;
             }
         }
@@ -284,10 +259,10 @@ bool Enemy::findBomb(int targetRank, bool mustGreater, vector<int>& outIdx, int&
     return false;
 }
 
-bool Enemy::findRocket(vector<int>& outIdx) {
-    const auto& h = getHand();
+bool Enemy::findRocket(std::vector<int>& outIdx) const {
+    const auto& h = hand;
     int idxSmall = -1, idxBig = -1;
-    for (size_t i = 0; i < h.size(); ++i) {
+    for (std::size_t i = 0; i < h.size(); ++i) {
         if (h[i].suit == Suit::Joker) {
             if (h[i].rank == 16) idxSmall = static_cast<int>(i);
             if (h[i].rank == 17) idxBig   = static_cast<int>(i);
@@ -300,30 +275,30 @@ bool Enemy::findRocket(vector<int>& outIdx) {
     return false;
 }
 
-bool Enemy::findStraightGreater(int targetHighRank, int length, vector<int>& outIdx) {
+bool Enemy::findStraightGreater(int targetHighRank, int length,
+                                std::vector<int>& outIdx) const
+{
     if (length != 5) return false;
-    const auto& h = getHand();
 
-    map<int, int> rankToIdx;
-    for (size_t i = 0; i < h.size(); ++i) {
+    const auto& h = hand;
+    std::map<int, int> rankToIdx;
+    for (std::size_t i = 0; i < h.size(); ++i) {
         int r = h[i].rank;
-        if (r < 3 || r > 14) continue;
+        if (r < 3 || r > 14) continue; // no 2, no Jokers
         if (rankToIdx.find(r) == rankToIdx.end()) {
             rankToIdx[r] = static_cast<int>(i);
         }
     }
-
-    if (rankToIdx.size() < static_cast<size_t>(length)) {
+    if (rankToIdx.size() < static_cast<std::size_t>(length)) {
         return false;
     }
 
-    vector<int> ranks;
+    std::vector<int> ranks;
     ranks.reserve(rankToIdx.size());
     for (auto& kv : rankToIdx) {
         ranks.push_back(kv.first);
     }
 
-    sort(ranks.begin(), ranks.end());
     for (int i = 0; i + length - 1 < static_cast<int>(ranks.size()); ++i) {
         bool ok = true;
         for (int j = 0; j + 1 < length; ++j) {
@@ -346,19 +321,25 @@ bool Enemy::findStraightGreater(int targetHighRank, int length, vector<int>& out
     return false;
 }
 
-bool Enemy::findFullHouseGreater(int targetTripleRank, vector<int>& outIdx) {
-    const auto& h = getHand();
-    map<int, vector<int>> rankToIdxList;
-    for (size_t i = 0; i < h.size(); ++i) {
+bool Enemy::findFullHouseGreater(int targetTripleRank,
+                                 std::vector<int>& outIdx) const
+{
+    const auto& h = hand;
+    std::map<int, std::vector<int>> rankToIdxList;
+    for (std::size_t i = 0; i < h.size(); ++i) {
         rankToIdxList[h[i].rank].push_back(static_cast<int>(i));
     }
 
-    for (auto itTriple = rankToIdxList.begin(); itTriple != rankToIdxList.end(); ++itTriple) {
+    for (auto itTriple = rankToIdxList.begin();
+         itTriple != rankToIdxList.end(); ++itTriple)
+    {
         int rTriple = itTriple->first;
         if (static_cast<int>(itTriple->second.size()) < 3) continue;
         if (rTriple <= targetTripleRank) continue;
 
-        for (auto itPair = rankToIdxList.begin(); itPair != rankToIdxList.end(); ++itPair) {
+        for (auto itPair = rankToIdxList.begin();
+             itPair != rankToIdxList.end(); ++itPair)
+        {
             int rPair = itPair->first;
             if (rPair == rTriple) continue;
             if (static_cast<int>(itPair->second.size()) < 2) continue;
@@ -375,165 +356,169 @@ bool Enemy::findFullHouseGreater(int targetTripleRank, vector<int>& outIdx) {
     return false;
 }
 
-bool Enemy::findAnyPair(vector<int>& outIdx) {
-    const auto& h = getHand();
-    size_t n = h.size();
-    size_t i = 0;
-    while (i + 1 < n) {
-        int r = h[i].rank;
-        size_t j = i + 1;
-        while (j < n && h[j].rank == r) {
-            ++j;
-        }
-        int cnt = static_cast<int>(j - i);
-        if (cnt >= 2) {
-            outIdx = { static_cast<int>(i), static_cast<int>(i + 1) };
-            return true;
-        }
-        i = j;
-    }
-    return false;
-}
+// --- helpers for opening a new round (lastMove == Pass) ---
 
-bool Enemy::findAnyStraightLen5(vector<int>& outIdx) {
-    const auto& h = getHand();
-    map<int, int> rankToIdx;
-    for (size_t i = 0; i < h.size(); ++i) {
+// 找任意 5 張順子（盡量出「最小」的）
+bool Enemy::findAnyStraight(int length, std::vector<int>& outIdx) const {
+    if (length != 5) return false;
+
+    const auto& h = hand;
+    std::map<int, int> rankToIdx;
+    for (std::size_t i = 0; i < h.size(); ++i) {
         int r = h[i].rank;
-        if (r < 3 || r > 14) continue;
+        if (r < 3 || r > 14) continue; // no 2, no Jokers
         if (rankToIdx.find(r) == rankToIdx.end()) {
             rankToIdx[r] = static_cast<int>(i);
         }
     }
-    if (rankToIdx.size() < 5) return false;
+    if (rankToIdx.size() < static_cast<std::size_t>(length)) {
+        return false;
+    }
 
-    vector<int> ranks;
+    std::vector<int> ranks;
     ranks.reserve(rankToIdx.size());
     for (auto& kv : rankToIdx) {
         ranks.push_back(kv.first);
     }
 
-    sort(ranks.begin(), ranks.end());
-    for (int i = 0; i + 4 < static_cast<int>(ranks.size()); ++i) {
+    int bestHigh = 1000;
+    std::vector<int> bestIndices;
+
+    for (int i = 0; i + length - 1 < static_cast<int>(ranks.size()); ++i) {
         bool ok = true;
-        for (int j = 0; j < 4; ++j) {
+        for (int j = 0; j + 1 < length; ++j) {
             if (ranks[i + j + 1] != ranks[i + j] + 1) {
                 ok = false;
                 break;
             }
         }
         if (!ok) continue;
-
-        outIdx.clear();
-        for (int k = 0; k < 5; ++k) {
-            int r = ranks[i + k];
-            outIdx.push_back(rankToIdx[r]);
+        int highRank = ranks[i + length - 1];
+        if (highRank < bestHigh) {
+            bestHigh = highRank;
+            bestIndices.clear();
+            for (int k = 0; k < length; ++k) {
+                int r = ranks[i + k];
+                bestIndices.push_back(rankToIdx[r]);
+            }
         }
-        return true;
+    }
+
+    if (bestIndices.empty()) return false;
+    outIdx = bestIndices;
+    return true;
+}
+
+// 找任意葫蘆（一樣選 triple 點數最小的）
+bool Enemy::findAnyFullHouse(std::vector<int>& outIdx) const {
+    const auto& h = hand;
+    std::map<int, std::vector<int>> rankToIdxList;
+    for (std::size_t i = 0; i < h.size(); ++i) {
+        rankToIdxList[h[i].rank].push_back(static_cast<int>(i));
+    }
+
+    int bestTripleRank = 1000;
+    std::vector<int> bestIndices;
+
+    for (auto itTriple = rankToIdxList.begin();
+         itTriple != rankToIdxList.end(); ++itTriple)
+    {
+        int rTriple = itTriple->first;
+        if (static_cast<int>(itTriple->second.size()) < 3) continue;
+
+        for (auto itPair = rankToIdxList.begin();
+             itPair != rankToIdxList.end(); ++itPair)
+        {
+            int rPair = itPair->first;
+            if (rPair == rTriple) continue;
+            if (static_cast<int>(itPair->second.size()) < 2) continue;
+
+            if (rTriple < bestTripleRank) {
+                bestTripleRank = rTriple;
+                bestIndices.clear();
+                bestIndices.push_back(itTriple->second[0]);
+                bestIndices.push_back(itTriple->second[1]);
+                bestIndices.push_back(itTriple->second[2]);
+                bestIndices.push_back(itPair->second[0]);
+                bestIndices.push_back(itPair->second[1]);
+            }
+        }
+    }
+
+    if (bestIndices.empty()) return false;
+    outIdx = bestIndices;
+    return true;
+}
+
+// 開新一輪用的對子選擇：只選 rank <= 13（不會拿 AA / 22 / JokerJoker 開局）
+bool Enemy::findOpeningPair(std::vector<int>& outIdx) const {
+    const auto& h = hand;
+    std::size_t n = h.size();
+    std::size_t i = 0;
+    while (i + 1 < n) {
+        int r = h[i].rank;
+        std::size_t j = i + 1;
+        while (j < n && h[j].rank == r) {
+            ++j;
+        }
+        int cnt = static_cast<int>(j - i);
+        if (cnt >= 2) {
+            // 避免 AA (14), 22 (15), Jokers(16,17)
+            if (r <= 13) {
+                outIdx = { static_cast<int>(i), static_cast<int>(i + 1) };
+                return true;
+            }
+        }
+        i = j;
     }
     return false;
 }
 
-bool Enemy::findAnyFullHouse(vector<int>& outIdx) {
-    const auto& h = getHand();
-    map<int, vector<int>> rankToIdxList;
-    for (size_t i = 0; i < h.size(); ++i) {
-        rankToIdxList[h[i].rank].push_back(static_cast<int>(i));
-    }
-
-    int bestTripleRank = 100;
-    int chosenTripleRank = -1;
-    int chosenPairRank = -1;
-
-    for (auto& kvT : rankToIdxList) {
-        int rTriple = kvT.first;
-        if (static_cast<int>(kvT.second.size()) < 3) continue;
-        if (rTriple >= bestTripleRank) continue;
-
-        for (auto& kvP : rankToIdxList) {
-            int rPair = kvP.first;
-            if (rPair == rTriple) continue;
-            if (static_cast<int>(kvP.second.size()) < 2) continue;
-
-            bestTripleRank = rTriple;
-            chosenTripleRank = rTriple;
-            chosenPairRank = rPair;
-        }
-    }
-
-    if (chosenTripleRank == -1) return false;
-
-    outIdx.clear();
-    auto& tIdx = rankToIdxList[chosenTripleRank];
-    auto& pIdx = rankToIdxList[chosenPairRank];
-    outIdx.push_back(tIdx[0]);
-    outIdx.push_back(tIdx[1]);
-    outIdx.push_back(tIdx[2]);
-    outIdx.push_back(pIdx[0]);
-    outIdx.push_back(pIdx[1]);
-    return true;
-}
-
-bool Enemy::findLeadSingle(vector<int>& outIdx) {
-    const auto& h = getHand();
-    int idxBest = -1;
-    int bestRank = 100;
-
-    for (size_t i = 0; i < h.size(); ++i) {
-        int r = h[i].rank;
-        if (r >= 15) continue;
-        if (r < bestRank) {
-            bestRank = r;
-            idxBest = static_cast<int>(i);
-        }
-    }
-
-    if (idxBest == -1) {
-        if (h.empty()) return false;
-        idxBest = 0;
-    }
-
-    outIdx = { idxBest };
-    return true;
-}
+// --- main AI decision ---
 
 Move Enemy::playTurn(const Move& lastMove) {
-    cout << "\n--- 輪到 AI [" << name << "] 出牌 ---\n";
+    std::cout << "\n--- AI [" << name << "] turn ---\n";
 
-    if (isHandEmpty()) {
-        return Move();
+    if (hand.empty()) {
+        return Move(); // Pass
     }
 
-    int cardsBefore = static_cast<int>(handSize());
+    std::vector<int> idxList;
+    std::vector<Card> played;
+    std::pair<HandType, int> info;
 
-    vector<int> idxList;
-    vector<Card> played;
-    pair<HandType, int> info;
-
+    // 1) New round: lastMove is Pass
     if (lastMove.type == HandType::Pass) {
-        if (findAnyStraightLen5(idxList)) {
-            played = playCardsByIndices(idxList);
-            info   = analyzeHand(played);
-        }
-        else if (findAnyPair(idxList)) {
-            played = playCardsByIndices(idxList);
-            info   = analyzeHand(played);
-        }
-        else if (findLeadSingle(idxList)) {
-            played = playCardsByIndices(idxList);
-            info   = analyzeHand(played);
-        }
-        else {
-            cout << "AI [" << name << "] 找不到可以領先的牌，Pass。\n";
-            return Move();
+        bool found = false;
+
+        // priority:
+        //   5 cards (Straight > FullHouse) -> opening pair (low ranks) -> single
+        if (findAnyStraight(5, idxList)) {
+            found = true;
+        } else if (findAnyFullHouse(idxList)) {
+            found = true;
+        } else if (findOpeningPair(idxList)) {
+            found = true;
+        } else if (findSingleGreater(-1, idxList)) { // -1 => smallest single
+            found = true;
         }
 
-        cout << "AI [" << name << "] 領先出牌：[" << handTypeToString(info.first) << "] ";
-        for (const auto& c : played) cout << c << "  ";
-        cout << "\n";
+        if (!found) {
+            idxList = { 0 };
+        }
+
+        played = playCardsByIndices(idxList);
+        info   = analyzeHand(played);
+
+        std::cout << "AI [" << name << "] plays: ["
+                  << handTypeToString(info.first) << "] ";
+        for (const auto& c : played) std::cout << c << "  ";
+        std::cout << "\n";
+
         return Move(info.first, played, info.second);
     }
 
+    // 2) Following an existing move: try same type first
     bool found = false;
 
     if (lastMove.type == HandType::Single) {
@@ -546,60 +531,61 @@ Move Enemy::playTurn(const Move& lastMove) {
     } else if (lastMove.type == HandType::FullHouse) {
         found = findFullHouseGreater(lastMove.mainRank, idxList);
     } else if (lastMove.type == HandType::Bomb) {
-        int dummyRank = -1;
-        found = findBomb(lastMove.mainRank, true, idxList, dummyRank);
+        found = findBomb(lastMove.mainRank, true, idxList);
     } else if (lastMove.type == HandType::Rocket) {
-        found = false;
+        found = false; // cannot beat rocket
     }
 
     if (found) {
         played = playCardsByIndices(idxList);
         info   = analyzeHand(played);
-        cout << "AI [" << name << "] 出牌：[" << handTypeToString(info.first) << "] ";
-        for (const auto& c : played) cout << c << "  ";
-        cout << "\n";
+        std::cout << "AI [" << name << "] plays: ["
+                  << handTypeToString(info.first) << "] ";
+        for (const auto& c : played) std::cout << c << "  ";
+        std::cout << "\n";
         return Move(info.first, played, info.second);
     }
 
-    if (lastMove.type != HandType::Bomb && lastMove.type != HandType::Rocket) {
-        int bombRank = -1;
-        if (findBomb(-1, false, idxList, bombRank)) {
-            bool useBomb = false;
+    // 3) No same-type move: decide whether we are willing to use bomb / rocket
+    bool allowBombRocket = true;
+    if (bombDecisionProb < 1.0) {
+        static std::mt19937 rng{ std::random_device{}() };
+        std::uniform_real_distribution<double> dist(0.0, 1.0);
+        double r = dist(rng);
+        if (r > bombDecisionProb) {
+            allowBombRocket = false;
+        }
+    }
 
-            if (cardsBefore <= 8) useBomb = true;
-            if (lastMove.mainRank >= 14) useBomb = true;
-
-            if (useBomb) {
+    if (allowBombRocket) {
+        // 先試炸彈
+        if (lastMove.type != HandType::Bomb && lastMove.type != HandType::Rocket) {
+            if (findBomb(-1, false, idxList)) {
                 played = playCardsByIndices(idxList);
                 info   = analyzeHand(played);
-                cout << "AI [" << name << "] 使用炸彈：";
-                for (const auto& c : played) cout << c << "  ";
-                cout << "\n";
+                std::cout << "AI [" << name << "] plays: ["
+                          << handTypeToString(info.first) << "] ";
+                for (const auto& c : played) std::cout << c << "  ";
+                std::cout << "\n";
                 return Move(info.first, played, info.second);
             }
         }
-    }
 
-    {
-        vector<int> rocketIdx;
-        if (findRocket(rocketIdx)) {
-            bool useRocket = false;
-            if (cardsBefore <= 6) useRocket = true;
-            if (lastMove.type == HandType::Bomb || lastMove.type == HandType::Rocket) {
-                useRocket = true;
-            }
-
-            if (useRocket) {
-                played = playCardsByIndices(rocketIdx);
-                info   = analyzeHand(played);
-                cout << "AI [" << name << "] 使用火箭：";
-                for (const auto& c : played) cout << c << "  ";
-                cout << "\n";
-                return Move(info.first, played, info.second);
-            }
+        // 再試火箭
+        if (findRocket(idxList)) {
+            played = playCardsByIndices(idxList);
+            info   = analyzeHand(played);
+            std::cout << "AI [" << name << "] plays: ["
+                      << handTypeToString(info.first) << "] ";
+            for (const auto& c : played) std::cout << c << "  ";
+            std::cout << "\n";
+            return Move(info.first, played, info.second);
         }
+    } else {
+        std::cout << "AI [" << name << "] decides to save bomb/rocket.\n";
     }
 
-    cout << "AI [" << name << "] 選擇 Pass。\n";
-    return Move();
+    // 4) Really nothing or decided to keep bombs/rocket: Pass
+    std::cout << "AI [" << name << "] chooses Pass.\n";
+    return Move(); // Pass
 }

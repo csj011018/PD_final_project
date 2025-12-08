@@ -13,9 +13,10 @@ public:
 
     void init();
     void shuffle();
+
     bool empty() const;
     Card draw();
-    size_t size() const;
+    std::size_t size() const;
 };
 
 #endif // DECK_H
