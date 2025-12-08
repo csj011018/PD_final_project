@@ -456,7 +456,7 @@ void drawEndScreen(sf::RenderWindow& window,
 
 void drawStartScreen(sf::RenderWindow& window, sf::Font& font)
 {
-    sf::Text title(font, "Doudizhu / Big Two", 40);
+    sf::Text title(font, "Doudizhu", 40);
     title.setFillColor(sf::Color::Yellow);
     auto tb = title.getLocalBounds();
     float tx = (window.getSize().x - tb.size.x) / 2.f;
